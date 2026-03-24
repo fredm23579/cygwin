@@ -38,10 +38,12 @@ jobs:
     - uses: actions/checkout@v3
 
     # Ensure git treats the workspace as safe inside the Fedora container.
-    # Needed because the runner mounts the workspace owned by a different UID
-    # than the container user, triggering git's dubious-ownership check.
+    # In container jobs, git config --global is a no-op because the container
+    # user's HOME differs from the runner's HOME. Use --system (writes to
+    # /etc/gitconfig) which is read by all users in the container.
+    # The '*' wildcard covers any path, including future workspace path changes.
     - name: Mark workspace safe for git
-      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      run: git config --system --add safe.directory '*'
 
     # install build tools
     - name: Install build tools
