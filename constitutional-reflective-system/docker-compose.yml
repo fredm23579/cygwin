@@ -1,0 +1,136 @@
+version: "3.9"
+
+# Constitutional Reflective System - Docker Compose
+# Usage:
+#   docker compose up              # postgres + server + worker
+#   docker compose --profile redis up  # adds redis
+#   docker compose --profile dev up    # adds pgadmin
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  crs_net:
+    driver: bridge
+
+services:
+  # ------------------------------------------------------------------
+  # PostgreSQL
+  # ------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: crs-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: crs
+      POSTGRES_PASSWORD: crs
+      POSTGRES_DB: crs
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - crs_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crs -d crs"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ------------------------------------------------------------------
+  # Redis (optional - use with --profile redis)
+  # ------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: crs-redis
+    restart: unless-stopped
+    profiles:
+      - redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - crs_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ------------------------------------------------------------------
+  # CRS API Server
+  # ------------------------------------------------------------------
+  server:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.server
+    container_name: crs-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://crs:crs@postgres:5432/crs
+      DATABASE_SYNC_URL: postgresql+psycopg2://crs:crs@postgres:5432/crs
+    ports:
+      - "8000:8000"
+    networks:
+      - crs_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    volumes:
+      # Mount source for development hot-reload
+      - ./packages:/app/packages:ro
+
+  # ------------------------------------------------------------------
+  # CRS Worker (background task processor)
+  # ------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    container_name: crs-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      server:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://crs:crs@postgres:5432/crs
+      DATABASE_SYNC_URL: postgresql+psycopg2://crs:crs@postgres:5432/crs
+    networks:
+      - crs_net
+    volumes:
+      - ./packages:/app/packages:ro
+
+  # ------------------------------------------------------------------
+  # pgAdmin (dev profile)
+  # ------------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: crs-pgadmin
+    profiles:
+      - dev
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@crs.local
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    networks:
+      - crs_net
+    depends_on:
+      postgres:
+        condition: service_healthy
