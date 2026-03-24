@@ -17,12 +17,7 @@ concurrency:
 jobs:
   fedora-build:
     runs-on: ubuntu-latest
-    # Pin to Fedora 41 rather than 'latest' (currently Fedora 42).
-    # Fedora 42 introduced assembler toolchain changes (e.g. the new .base64
-    # pseudo-op) that break host-native program compilation during cross-builds.
-    # Explicitly pin to the last known-good release; bump when COPR packages
-    # are rebuilt and tested against the newer Fedora.
-    container: fedora:41
+    container: fedora:latest
     strategy:
       fail-fast: false
       matrix:
@@ -75,6 +70,12 @@ jobs:
       run: |
         mkdir build install
         (cd winsup && ./autogen.sh)
+        # Fedora 42+ ships GCC 15 which defaults to -std=gnu23 (C23).
+        # Several host-compiled utilities in the Cygwin / newlib build tree
+        # use C99/C17 constructs that are rejected in C23 (e.g. implicit int,
+        # K&R-style declarations, 'bool'/'nullptr' as identifiers).
+        # Force C17 mode for host-only compilation to keep things working.
+        export CFLAGS_FOR_BUILD='-std=gnu17'
         (cd build && ../configure --target=${{ matrix.target }} --prefix=$(realpath $(pwd)/../install) )
         make -C build
         make -C build/*/newlib info man
