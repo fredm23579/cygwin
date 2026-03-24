@@ -18,3 +18,40 @@
 #     file gets renamed again ...
 
 ChangeLog       merge=merge-changelog
+
+# ── Line ending normalization ──────────────────────────────────────────────────
+# Ensure shell scripts always use LF (Unix line endings), even on Windows.
+# PowerShell scripts use CRLF as Windows expects them, but LF also works.
+*.sh            text eol=lf
+*.bash          text eol=lf
+configure       text eol=lf
+*.ac            text eol=lf
+*.am            text eol=lf
+
+# PowerShell scripts: use CRLF on Windows checkout, LF in repo
+*.ps1           text eol=crlf
+*.psm1          text eol=crlf
+*.psd1          text eol=crlf
+
+# Documentation / markup: LF
+*.md            text eol=lf
+*.xml           text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.json          text eol=lf
+
+# C / C++ source: LF
+*.c             text eol=lf
+*.cc            text eol=lf
+*.h             text eol=lf
+*.in            text eol=lf
+
+# Binary files: no conversion
+*.exe           binary
+*.dll           binary
+*.o             binary
+*.a             binary
+*.pdf           binary
+*.png           binary
+*.jpg           binary
+*.ico           binary
