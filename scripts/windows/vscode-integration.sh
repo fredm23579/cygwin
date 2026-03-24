@@ -373,21 +373,21 @@ cmd_install() {
   # Fallback: hard-coded list keeps installs working even if extensions.json
   # was not yet generated or is unreadable.
   if [[ ${#ext_list[@]} -eq 0 ]]; then
-  local ext_list=(
-    ms-vscode.cpptools
-    ms-vscode.cpptools-extension-pack
-    ms-vscode.cmake-tools
-    mads-hartmann.bash-ide-vscode
-    timonwong.shellcheck
-    redhat.vscode-xml
-    editorconfig.editorconfig
-    eamodio.gitlens
-    streetsidesoftware.code-spell-checker
-    github.copilot
-    github.copilot-chat
-    ms-vscode.makefile-tools
-    ms-vscode-remote.vscode-remote-extensionpack
-  )
+    ext_list=(
+      ms-vscode.cpptools
+      ms-vscode.cpptools-extension-pack
+      ms-vscode.cmake-tools
+      mads-hartmann.bash-ide-vscode
+      timonwong.shellcheck
+      redhat.vscode-xml
+      editorconfig.editorconfig
+      eamodio.gitlens
+      streetsidesoftware.code-spell-checker
+      github.copilot
+      github.copilot-chat
+      ms-vscode.makefile-tools
+      ms-vscode-remote.vscode-remote-extensionpack
+    )
   fi
 
   for ext in "${ext_list[@]}"; do
