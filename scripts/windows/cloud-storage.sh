@@ -78,21 +78,41 @@ find_onedrive_business() {
 }
 
 find_google_drive() {
-  # Google Drive Desktop creates a virtual drive letter; we use a known path
-  local letter
-  for letter in G H I J K L M; do
-    local p; p=$(cygpath "/cygdrive/${letter,,}/My Drive" 2>/dev/null || true)
+  # Google Drive Desktop mounts as a virtual drive with a letter that varies
+  # per user. Rather than guessing letters, use a glob over all /cygdrive/?/
+  # entries and look for the canonical "My Drive" directory.
+  local p
+  for p in /cygdrive/?/My\ Drive /cygdrive/?/MyDrive; do
     [[ -d "$p" ]] && echo "$p" && return
   done
-  # Also check the Documents folder
-  [[ -d "${USERPROFILE}/Google Drive" ]] && echo "${USERPROFILE}/Google Drive"
+  # Also check common user-directory locations (older Drive versions)
+  for p in \
+    "${USERPROFILE}/Google Drive" \
+    "${USERPROFILE}/My Drive"; do
+    [[ -d "$p" ]] && echo "$p" && return
+  done
 }
 
 find_dropbox() {
   local info_file="${APPDATA:-${USERPROFILE}/AppData/Roaming}/Dropbox/info.json"
   if [[ -f "$info_file" ]]; then
-    python3 -c "import json,sys; d=json.load(open('$info_file')); print(list(d.values())[0]['path'])" \
-      2>/dev/null | xargs -I{} cygpath '{}' 2>/dev/null || true
+    # Parse the Dropbox config file with explicit error handling so that a
+    # malformed JSON doesn't produce a confusing Python traceback.
+    local dropbox_win_path
+    dropbox_win_path=$(python3 - "$info_file" 2>/dev/null <<'PYEOF'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1]))
+    # info.json has shape: {"personal": {"path": "..."}, ...}
+    path = next(iter(data.values()))["path"]
+    print(path)
+except Exception:
+    sys.exit(1)
+PYEOF
+    ) || true
+    if [[ -n "$dropbox_win_path" ]]; then
+      cygpath "$dropbox_win_path" 2>/dev/null && return
+    fi
   fi
   # Fallback: common locations
   [[ -d "${USERPROFILE}/Dropbox" ]] && echo "${USERPROFILE}/Dropbox"

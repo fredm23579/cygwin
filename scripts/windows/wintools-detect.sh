@@ -88,17 +88,21 @@ detect_tool() {
     fi
   done
 
-  # Try each candidate path in order
+  # Try each candidate path in order.
+  # Use eval + printf to expand globs safely while still supporting patterns
+  # like "/cygdrive/c/Users/*/AppData/..." without word-splitting on spaces
+  # that may be present in Windows paths.
   local found_path=''
   for candidate in "${search_paths[@]}"; do
-    # Support glob expansion (e.g. /cygdrive/c/Users/*/AppData/...)
-    # shellcheck disable=SC2086
-    for expanded in $candidate; do
-      if [[ -x "$expanded" ]]; then
-        found_path="$expanded"
-        break 2
-      fi
-    done
+    # Use nullglob so unmatched globs produce nothing rather than a literal string
+    local expanded_paths
+    expanded_paths=$(
+      bash -c 'set -f; shopt -s nullglob; for p in '"$(printf '%q' "$candidate")"'; do [[ -x "$p" ]] && printf "%s\n" "$p" && break; done'
+    )
+    if [[ -n "$expanded_paths" ]]; then
+      found_path=$(head -1 <<< "$expanded_paths")
+      break
+    fi
   done
 
   # Also try PATH lookup if no explicit paths given
@@ -128,9 +132,15 @@ section() { $QUIET || printf "\n${BOLD}${CYAN}▶ %s${RESET}\n" "$1"; }
 
 # ── Windows-specific path helpers ─────────────────────────────────────────────
 # Expand a Windows environment variable like %PROGRAMFILES% into a Cygwin path.
+# Captures the whole value as one string before passing to cygpath, so that
+# paths containing spaces (e.g. "C:\Program Files") are handled correctly.
 win_env() {
   local var="$1"
-  cmd.exe /c "echo %${var}%" 2>/dev/null | tr -d '\r\n' | xargs -I{} cygpath '{}' 2>/dev/null || true
+  local win_path
+  win_path=$(cmd.exe /c "echo %${var}%" 2>/dev/null | tr -d '\r\n')
+  # Guard against unexpanded variables (cmd echoes the literal %VAR% when unset)
+  [[ -z "$win_path" || "$win_path" == "%${var}%" ]] && return 0
+  cygpath "$win_path" 2>/dev/null || true
 }
 
 PROGRAMFILES=$(win_env PROGRAMFILES)

@@ -96,8 +96,15 @@ jobs:
           refs/heads/main)
             DEST='preview'
             ;;
-          refs/tags/cygwin-[0-9.]*)
-            DEST='stable'
+          # Match only stable release tags like cygwin-3.5.4 (not cygwin-3.5.4.dev)
+          refs/tags/cygwin-[0-9]*.[0-9]*.[0-9]*)
+            # Reject pre-release / development tags that contain extra suffixes
+            if [[ "${{ github.ref }}" =~ ^refs/tags/cygwin-[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              DEST='stable'
+            else
+              echo "Tag looks like a pre-release (${{ github.ref }}); skipping deploy."
+              exit 0
+            fi
             ;;
           *)
             echo "Not a deployable ref (${{ github.ref }}); skipping deploy."

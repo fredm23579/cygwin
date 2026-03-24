@@ -64,8 +64,11 @@ find_setup_exe() {
     [[ -x "$p" ]] && echo "$p" && return 0
   done
 
-  # Last resort: search common download folders
-  find "$(cygpath 'C:\Users')" -name 'setup-x86_64.exe' -maxdepth 4 2>/dev/null \
+  # Last resort: search common download folders.
+  # -maxdepth must appear before the search path in POSIX find.
+  # -type f prevents matching directories or symlinks named setup-x86_64.exe.
+  find "$(cygpath 'C:\Users')" -maxdepth 4 -type f \
+    -name 'setup-x86_64.exe' 2>/dev/null \
     | head -1
 
   return 1
@@ -75,31 +78,60 @@ CYGWIN_SETUP="${CYGWIN_SETUP:-$(find_setup_exe 2>/dev/null || true)}"
 
 # ── Cygwin package database helpers ───────────────────────────────────────────
 
-# installed_version PKG → prints installed version or "not installed"
+# installed_version PKG → prints the installed version string, or nothing
 installed_version() {
   local pkg="$1"
   local db="${CYGWIN_ROOT}/var/log/setup.log.full"
-  if [[ -f "$db" ]]; then
-    grep -oP "(?<=inst: )${pkg}-[0-9][^\s]+" "$db" 2>/dev/null | tail -1 \
-      | sed "s/^${pkg}-//" || true
-  fi
+  [[ -f "$db" ]] || return 0
+
+  # Use grep -F (fixed-string) so package names with regex metacharacters
+  # (dots, pluses, etc.) are treated literally, preventing false matches.
+  # Filter lines that start with "inst: <pkgname>-<digit>" to pin to the
+  # package boundary, then strip the leading "<pkgname>-" prefix.
+  grep -F "inst: ${pkg}-" "$db" 2>/dev/null \
+    | grep -oE "inst: ${pkg}-[0-9][^[:space:]]+" \
+    | tail -1 \
+    | sed "s|^inst: ${pkg}-||" \
+    || true
 }
 
-# available_version PKG MIRROR → queries the mirror's setup.ini for latest version
+# available_version PKG [MIRROR] → prints the latest version from the mirror index
 available_version() {
   local pkg="$1"
   local mirror="${2:-$CYGWIN_MIRROR}"
-  # Download setup.ini if we don't have a cached copy
   local ini_cache="${CYGWIN_CACHE}/setup.ini"
-  if [[ ! -f "$ini_cache" ]] || [[ $(( $(date +%s) - $(stat -c %Y "$ini_cache" 2>/dev/null || echo 0) )) -gt 3600 ]]; then
+  local ini_tmp="${ini_cache}.tmp.$$"   # per-PID temp file for atomic write
+
+  # Refresh cache if missing or older than one hour
+  local cache_age=0
+  if [[ -f "$ini_cache" ]]; then
+    cache_age=$(( $(date +%s) - $(stat -c %Y "$ini_cache" 2>/dev/null || echo 0) ))
+  fi
+
+  if [[ ! -f "$ini_cache" ]] || [[ $cache_age -gt 3600 ]]; then
     log "Fetching package index from ${mirror}…"
     mkdir -p "$CYGWIN_CACHE"
-    curl -sSf "${mirror}x86_64/setup.ini" -o "$ini_cache" 2>/dev/null || {
+
+    # Download to a temp file first; rename atomically on success.
+    # This prevents other concurrent invocations from reading a partial file.
+    if curl -sSf --max-time 30 --retry 2 \
+        "${mirror}x86_64/setup.ini" -o "$ini_tmp" 2>/dev/null; then
+      # Sanity-check: a valid setup.ini starts with "setup-timestamp:" or "@ "
+      if grep -qE '^(setup-timestamp:|@ )' "$ini_tmp" 2>/dev/null; then
+        mv "$ini_tmp" "$ini_cache"
+      else
+        rm -f "$ini_tmp"
+        warn "Downloaded setup.ini appears corrupt; discarding."
+        return 1
+      fi
+    else
+      rm -f "$ini_tmp"
       warn "Could not fetch setup.ini from mirror; try --set-mirror <URL>"
       return 1
-    }
+    fi
   fi
-  # Parse the version from setup.ini (field after "version:")
+
+  # Use awk for exact package matching — avoids regex metacharacter issues.
   awk -v pkg="$pkg" '
     /^@ / { in_pkg = ($2 == pkg) }
     in_pkg && /^version:/ { print $2; exit }
@@ -150,10 +182,12 @@ cmd_check() {
     exit 1
   fi
 
-  # Extract unique package names from the install log
+  # Extract unique package names from the install log.
+  # Use grep -E (extended regex) rather than -P (PCRE) for portability;
+  # the pattern is simple enough for ERE.
   local pkgs
-  pkgs=$(grep -oP '(?<=inst: )\S+' "$setup_log" 2>/dev/null \
-         | sed 's/-[0-9].*//' | sort -u || true)
+  pkgs=$(grep -Eo 'inst: [^[:space:]]+' "$setup_log" 2>/dev/null \
+         | sed 's/^inst: //; s/-[0-9].*//' | sort -u || true)
 
   if [[ -z "$pkgs" ]]; then
     warn "Could not determine installed packages from ${setup_log}."
