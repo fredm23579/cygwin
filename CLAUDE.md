@@ -222,8 +222,8 @@ Always use `cygpath` to convert paths when bridging Cygwin ↔ Windows:
 cygpath -w /usr/bin/gcc        # → C:\cygwin64\usr\bin\gcc.exe
 cygpath -w /cygdrive/c/Users   # → C:\Users
 
-# Win32 → Cygwin
-cygpath "C:\Users\fred"        # → /cygdrive/c/Users/fred
+# Win32 → Cygwin (use single quotes to avoid backslash interpretation by bash)
+cygpath 'C:\Users\fred'        # → /cygdrive/c/Users/fred
 
 # For use in Windows commands (short 8.3 path)
 cygpath -ds "C:\Program Files" # → C:/PROGRA~1

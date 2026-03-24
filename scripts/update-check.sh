@@ -151,17 +151,20 @@ fi
 # ── Python module detail check ────────────────────────────────────────────────
 $QUIET || echo ""
 $QUIET || printf "${BOLD}Python module details:${RESET}\n"
-python3 -c "
+python3 - 2>/dev/null <<'PYEOF' || true
 import sys
 modules = {'lxml': '4.0', 'ply': '3.9'}
 for mod, min_ver in modules.items():
     try:
         m = __import__(mod)
         ver = getattr(m, '__version__', 'unknown')
+        # Print status so the outer shell can read it
         print(f'  {mod}: {ver}')
     except ImportError:
-        print(f'  {mod}: NOT INSTALLED')
-" 2>/dev/null || true
+        print(f'  {mod}: NOT INSTALLED (install: pip3 install {mod})')
+    except Exception as e:
+        print(f'  {mod}: ERROR — {e}')
+PYEOF
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 $QUIET || echo ""
@@ -194,5 +197,11 @@ if $OUTPUT_JSON; then
   echo '}'
 fi
 
-# Strict mode: exit non-zero if any required tool is missing or outdated
-$STRICT && (( FAIL_COUNT > 0 )) && exit 1 || exit 0
+# In strict mode, signal failure if any required tool is missing or outdated.
+# Written as an explicit if/else to avoid the common "A && B || C" pitfall
+# where C runs whenever B fails, not just when A is false.
+if $STRICT && (( FAIL_COUNT > 0 )); then
+  exit 1
+else
+  exit 0
+fi

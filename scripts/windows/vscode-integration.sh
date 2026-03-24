@@ -115,9 +115,11 @@ EXTEOF
 }
 
 create_settings_json() {
-  # Determine the Cygwin root for include path configuration
+  # Use forward-slash (mixed) paths for JSON: cygpath -m gives C:/cygwin64 style.
+  # Forward slashes are valid in Windows paths and need no escaping in JSON,
+  # unlike backslashes which would need to be doubled (\\).
   local cygwin_root
-  cygwin_root=$(cygpath -w '/')   # The Cygwin root as a Windows path
+  cygwin_root=$(cygpath -m '/')   # e.g. C:/cygwin64
 
   cat > "${VSCODE_DIR}/settings.json" <<SETTINGSEOF
 {
@@ -134,11 +136,11 @@ create_settings_json() {
   "files.eol": "\n",
 
   // ── C/C++ IntelliSense (ms-vscode.cpptools) ────────────────────────────────
-  "C_Cpp.default.compilerPath": "${cygwin_root}\\bin\\gcc.exe",
+  "C_Cpp.default.compilerPath": "${cygwin_root}/bin/gcc.exe",
   "C_Cpp.default.includePath": [
     "\${workspaceFolder}/**",
-    "${cygwin_root}\\usr\\include",
-    "${cygwin_root}\\usr\\include\\w32api"
+    "${cygwin_root}/usr/include",
+    "${cygwin_root}/usr/include/w32api"
   ],
   "C_Cpp.default.defines": [
     "__CYGWIN__",
@@ -153,7 +155,7 @@ create_settings_json() {
   "terminal.integrated.defaultProfile.windows": "Cygwin Bash",
   "terminal.integrated.profiles.windows": {
     "Cygwin Bash": {
-      "path": "${cygwin_root}\\bin\\bash.exe",
+      "path": "${cygwin_root}/bin/bash.exe",
       "args": ["--login", "-i"],
       "icon": "terminal-bash",
       "env": {
@@ -355,30 +357,38 @@ cmd_install() {
   fi
 
   log "Installing recommended extensions…"
-  # Read the recommendations array from extensions.json and install each
-  local extensions
-  extensions=$(grep -oP '(?<="ms-vscode|"eamodio|"github|"mads|"timonwong|"redhat|"editorconfig|"streetside|"ms-vscode-remote)[^"]*"' \
-    "${VSCODE_DIR}/extensions.json" 2>/dev/null \
-    | tr -d '"' \
-    | sed 's/^/ms-vscode/' \
-    || true)
+  # Parse extension IDs directly from extensions.json to keep a single source
+  # of truth. Strips comments (// ...) and extracts quoted publisher.name values.
+  local ext_list=()
+  if [[ -f "${VSCODE_DIR}/extensions.json" ]]; then
+    while IFS= read -r line; do
+      # Skip comment lines; extract the quoted extension identifier
+      [[ "$line" =~ ^[[:space:]]*/[/*] ]] && continue
+      local ext; ext=$(printf '%s' "$line" | grep -oE '"[a-z0-9-]+\.[a-z0-9._-]+"' \
+        | tr -d '"' || true)
+      [[ -n "$ext" ]] && ext_list+=("$ext")
+    done < "${VSCODE_DIR}/extensions.json"
+  fi
 
-  # Simpler: just install the full list directly
-  local ext_list=(
-    ms-vscode.cpptools
-    ms-vscode.cpptools-extension-pack
-    ms-vscode.cmake-tools
-    mads-hartmann.bash-ide-vscode
-    timonwong.shellcheck
-    redhat.vscode-xml
-    editorconfig.editorconfig
-    eamodio.gitlens
-    streetsidesoftware.code-spell-checker
-    github.copilot
-    github.copilot-chat
-    ms-vscode.makefile-tools
-    ms-vscode-remote.vscode-remote-extensionpack
-  )
+  # Fallback: hard-coded list keeps installs working even if extensions.json
+  # was not yet generated or is unreadable.
+  if [[ ${#ext_list[@]} -eq 0 ]]; then
+    ext_list=(
+      ms-vscode.cpptools
+      ms-vscode.cpptools-extension-pack
+      ms-vscode.cmake-tools
+      mads-hartmann.bash-ide-vscode
+      timonwong.shellcheck
+      redhat.vscode-xml
+      editorconfig.editorconfig
+      eamodio.gitlens
+      streetsidesoftware.code-spell-checker
+      github.copilot
+      github.copilot-chat
+      ms-vscode.makefile-tools
+      ms-vscode-remote.vscode-remote-extensionpack
+    )
+  fi
 
   for ext in "${ext_list[@]}"; do
     log "Installing ${ext}…"

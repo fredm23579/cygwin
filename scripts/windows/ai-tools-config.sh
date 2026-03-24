@@ -58,10 +58,13 @@ detect_ai_tools() {
     warn "GitHub Copilot CLI  — install: gh extension install github/gh-copilot"
   fi
 
-  # Claude Desktop (Anthropic) — Windows app, not in Cygwin PATH normally
-  local claude_exe
-  claude_exe=$(cygpath "${LOCALAPPDATA:-C:\\Users\\Default\\AppData\\Local}/AnthropicClaude/claude.exe" 2>/dev/null || true)
-  if [[ -x "$claude_exe" ]]; then
+  # Claude Desktop (Anthropic) — Windows app, not in Cygwin PATH normally.
+  # Guard against LOCALAPPDATA being unset (e.g. in restricted environments).
+  local claude_exe=''
+  if [[ -n "${LOCALAPPDATA:-}" ]]; then
+    claude_exe=$(cygpath "${LOCALAPPDATA}/AnthropicClaude/claude.exe" 2>/dev/null || true)
+  fi
+  if [[ -n "$claude_exe" && -x "$claude_exe" ]]; then
     ok "Claude Desktop      (Anthropic — $claude_exe)"
   else
     warn "Claude Desktop      — download: https://claude.ai/download"
