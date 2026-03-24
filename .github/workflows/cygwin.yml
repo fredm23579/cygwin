@@ -31,22 +31,17 @@ jobs:
       HAS_SSH_KEY: ${{ secrets.SSH_KEY != '' }}
 
     steps:
-    # actions/checkout@v3 (Node.js 16) is disabled by GitHub Actions as of 2025;
-    # use @v4 (Node.js 20). Fedora 41's glibc 2.38 satisfies Node 20's glibc >= 2.17.
     - uses: actions/checkout@v4
 
-    # Ensure git treats the workspace as safe inside the Fedora container.
-    # In container jobs, git config --global is a no-op because the container
-    # user's HOME differs from the runner's HOME. Use --system (writes to
-    # /etc/gitconfig) which is read by all users in the container.
-    # The '*' wildcard covers any path, including future workspace path changes.
-    - name: Mark workspace safe for git
-      run: git config --system --add safe.directory '*'
-
     # install build tools
+    # git is included so that 'git describe' works during the build and
+    # uname_version.c gets a proper version string (without it the string
+    # is silently empty, which is harmless but makes diagnostics harder).
     - name: Install build tools
       run: |
-        dnf install -y autoconf automake make patch perl mingw${{ matrix.pkgarch }}-gcc-c++ mingw${{ matrix.pkgarch }}-winpthreads-static mingw${{ matrix.pkgarch }}-zlib-static
+        dnf install -y git autoconf automake make patch perl mingw${{ matrix.pkgarch }}-gcc-c++ mingw${{ matrix.pkgarch }}-winpthreads-static mingw${{ matrix.pkgarch }}-zlib-static
+        # Allow git to access the workspace (safe.directory for the checked-out repo).
+        git config --system --add safe.directory '*'
 
     # enable 'dnf copr'
     - name: Enable 'dnf copr'
