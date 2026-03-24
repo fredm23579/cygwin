@@ -31,7 +31,17 @@ jobs:
       HAS_SSH_KEY: ${{ secrets.SSH_KEY != '' }}
 
     steps:
-    - uses: actions/checkout@v4
+    # actions/checkout@v4 has a known bug in container jobs: it only sets
+    # safe.directory in the post-step, which is too late for build steps that
+    # call git (e.g. winsup/cygwin/Makefile.am:uname_version.c uses
+    # 'git describe'). Use @v3 which handles container jobs correctly.
+    - uses: actions/checkout@v3
+
+    # Ensure git treats the workspace as safe inside the Fedora container.
+    # Needed because the runner mounts the workspace owned by a different UID
+    # than the container user, triggering git's dubious-ownership check.
+    - name: Mark workspace safe for git
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
     # install build tools
     - name: Install build tools
