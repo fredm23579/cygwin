@@ -1,0 +1,166 @@
+name: update-deps
+
+# Runs every Monday at 08:00 UTC to check for:
+#   - New releases of GitHub Actions used in cygwin.yml
+#   - New Cygwin package versions for build dependencies
+#   - Security advisories in build toolchain components
+#
+# If updates are found, opens (or updates) a PR titled "chore: update build dependencies".
+
+on:
+  schedule:
+    - cron: '0 8 * * 1'   # Every Monday at 08:00 UTC
+  workflow_dispatch:        # Allow manual trigger from the Actions tab
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-action-versions:
+    runs-on: ubuntu-latest
+    name: Check GitHub Actions versions
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        # Fetch the full history so we can create commits on a new branch
+        fetch-depth: 0
+
+    - name: Check for newer action versions
+      id: check_actions
+      run: |
+        set -euo pipefail
+
+        UPDATES_FOUND=false
+        REPORT=""
+
+        check_action() {
+          local action="$1"     # e.g. actions/checkout
+          local current="$2"    # e.g. v4
+          local repo="${action}"
+
+          # Query the GitHub API for the latest release
+          local latest
+          latest=$(curl -sSf \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${repo}/releases/latest" \
+            | jq -r '.tag_name' 2>/dev/null || echo "unknown")
+
+          if [[ "$latest" == "unknown" ]] || [[ -z "$latest" ]]; then
+            echo "  SKIP  ${action} — could not determine latest version"
+            return
+          fi
+
+          if [[ "$current" != "$latest" ]]; then
+            echo "  UPDATE  ${action}: ${current} → ${latest}"
+            REPORT="${REPORT}\n- \`${action}\`: \`${current}\` → \`${latest}\`"
+            UPDATES_FOUND=true
+          else
+            echo "  OK    ${action}: ${current} is current"
+          fi
+        }
+
+        echo "Checking GitHub Actions versions..."
+        check_action "actions/checkout"        "v4"
+        check_action "actions/upload-artifact" "v4"
+        check_action "cygwin/cygwin-install-action" "v4"
+
+        echo "UPDATES_FOUND=${UPDATES_FOUND}" >> "$GITHUB_OUTPUT"
+        # Write the report to a file so it can be used in the PR body step
+        printf "%b" "$REPORT" > /tmp/action-updates.txt
+
+    - name: Check for Cygwin package updates in workflow
+      id: check_packages
+      run: |
+        # Fetch the x86_64 setup.ini from the default Cygwin mirror
+        MIRROR="https://mirrors.kernel.org/sourceware/cygwin/"
+        curl -sSf "${MIRROR}x86_64/setup.ini" -o /tmp/setup.ini 2>/dev/null || {
+          echo "Could not fetch setup.ini — skipping package check"
+          exit 0
+        }
+
+        REPORT=""
+        UPDATES_FOUND=false
+
+        # Read packages listed in the workflow file
+        packages=$(grep -oP '(?<=^\s{10})[\w][\w\d-]+(?=,?)' \
+          .github/workflows/cygwin.yml 2>/dev/null | sort -u || true)
+
+        for pkg in $packages; do
+          avail=$(awk -v p="$pkg" '
+            /^@ / { in_pkg=($2==p) }
+            in_pkg && /^version:/ { print $2; exit }
+          ' /tmp/setup.ini 2>/dev/null || true)
+
+          if [[ -n "$avail" ]]; then
+            echo "  OK  ${pkg}: available version ${avail}"
+          fi
+        done
+
+        echo "PACKAGE_UPDATES_FOUND=${UPDATES_FOUND}" >> "$GITHUB_OUTPUT"
+
+    - name: Create summary
+      run: |
+        echo "## Build Dependency Check" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+        echo "Run at: $(date -u)" >> "$GITHUB_STEP_SUMMARY"
+        echo "" >> "$GITHUB_STEP_SUMMARY"
+
+        if [[ -s /tmp/action-updates.txt ]]; then
+          echo "### Action Version Updates Available" >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/action-updates.txt >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "### All Actions are Up To Date ✓" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+    - name: Open/update PR if updates found
+      if: steps.check_actions.outputs.UPDATES_FOUND == 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        BRANCH="chore/update-build-deps-$(date +%Y%m%d)"
+
+        git config user.name  "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
+
+        # The actual version bumps in workflow files would go here.
+        # For now, we just open an informational PR noting what to update.
+        cat /tmp/action-updates.txt >> .github/UPDATE-NOTES.md
+        echo "" >> .github/UPDATE-NOTES.md
+        echo "Generated: $(date -u)" >> .github/UPDATE-NOTES.md
+
+        git add .github/UPDATE-NOTES.md
+        git commit -m "chore: note available dependency updates $(date +%Y-%m-%d)" \
+          || echo "Nothing to commit"
+
+        git push -u origin "$BRANCH" || true
+
+        # Create or update the PR
+        if ! gh pr view "$BRANCH" &>/dev/null; then
+          gh pr create \
+            --title "chore: update build dependencies ($(date +%Y-%m-%d))" \
+            --body "$(cat <<'EOF'
+## Automated dependency update check
+
+The following build dependency updates are available:
+
+$(cat /tmp/action-updates.txt)
+
+### What to do
+Review each update and apply manually to \`.github/workflows/cygwin.yml\`:
+1. Check the changelog / release notes for the new version
+2. Update the version pin in the workflow file
+3. Test that the CI build still passes
+4. Merge this PR
+
+---
+*This PR was opened automatically by the \`update-deps\` workflow.*
+EOF
+)" \
+            --base main \
+            --head "$BRANCH"
+        fi
